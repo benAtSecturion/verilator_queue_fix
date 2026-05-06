@@ -918,13 +918,14 @@ static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) V
 }
 
 template <typename T>
-static inline IData VL_EQ_R(VlQueue<T> q, WDataInP const rwp) VL_PURE {
+static inline IData VL_EQ_R(VlQueue<T> q, WDataInP const rwp) VL_PURE
+{
     EData nequal = 0;
-    int words = q.size() / 4 - 1;
+    int words = q.size() * sizeof(T) / 4 - 1;
     IData temp = 0;
     IData debugTemp = 0;
-    if (sizeof(T) == 1) {
-        for (int i = 0; (i < words + 1); ++i) {
+    if(sizeof(T) == 1){
+        for (int i = 0; (i < words + 1); ++i){
             temp |= q.at((words - i) * 4 + 3);
             temp |= q.at((words - i) * 4 + 2) << 8;
             temp |= q.at((words - i) * 4 + 1) << 16;
@@ -932,8 +933,35 @@ static inline IData VL_EQ_R(VlQueue<T> q, WDataInP const rwp) VL_PURE {
             nequal |= (temp ^ rwp[i]);
             temp = 0;
         }
-    } else {
-        for (int i = 0; (i < words + 1); ++i) { nequal |= (q.at(words - i) ^ rwp[i]); }
+    }
+    else if (sizeof(T) == 2)
+    {
+        for (int i = 0; (i < words + 1); ++i)
+        {
+            temp |= q.at((words - i) * 2 + 1);
+            temp |= q.at((words - i) * 2) << 16;
+            nequal |= (temp ^ rwp[i]);
+            debugTemp = rwp[i];
+            temp = 0;
+        }
+    }
+    else if(sizeof(T) == 4){
+        for (int i = 0; (i < words + 1); ++i)
+        {
+            nequal |= (q.at(words - i) ^ rwp[i]);
+        }
+    }
+    else{
+        int wordCount = 0;
+        for (int i = 0; i < q.size(); i++)
+        {
+            nequal |= (q.at(q.size() - i - 1) ^ rwp[i*2]);
+            nequal |= (q.at(q.size() - i - 1) >> 32 ^ rwp[i*2 +1]);
+            //     debugTemp = rwp[i];
+            // debugTemp = (q.at(q.size() - i - 1)) >> 32;
+            // debugTemp = (q.at(q.size() - i - 1));
+            // debugTemp = rwp[i+1];
+        }
     }
     return (nequal == 0);
 }
@@ -1645,12 +1673,16 @@ static inline IData VL_STREAML_III(int lbits, const VlQueue<T>& q, IData rd) VL_
 }
 
 template <typename T>
-static inline VlQueue<unsigned char> VL_STREAML_RII(int lbits, const VlQueue<T> lwp,
-                                                    IData rd) VL_MT_SAFE {
+static inline VlQueue<unsigned char> VL_STREAML_RII(int lbits, const VlQueue<T> q,
+                                                    IData rd) VL_MT_SAFE
+{
+    //TODO this function needs to be optimized.
+    //it only needs to output a IData however verilator likes to shift select the output
     // dynamicly make our "temp variable"
-    lbits = lwp.size() * 8 * sizeof(T);
+    lbits = q.size() * 8 * sizeof(T);
     std::vector<uint32_t> my_buffer(lbits / 32, 0);
     WDataOutP owp = my_buffer.data();
+    WDataInP lwp = q;
     VL_ZERO_W(lbits, owp);
     const int ssize = (rd < static_cast<IData>(lbits)) ? rd : (static_cast<IData>(lbits));
     for (int istart = 0; istart < lbits; istart += rd) {
@@ -1681,12 +1713,15 @@ static inline VlQueue<unsigned char> VL_STREAML_RII(int lbits, const VlQueue<T> 
     return out_queue;
 }
 
-static inline IData VL_STREAML_RII(int lbits, IData ld, IData rd) VL_MT_SAFE {
+static inline IData VL_STREAML_RII(int lbits, IData ld,
+                                                    IData rd) VL_MT_SAFE
+{
 
     IData ret = 0;
     // Slice size should never exceed the lhs width
     const IData mask = VL_MASK_I(rd);
-    for (int istart = 0; istart < lbits; istart += rd) {
+    for (int istart = 0; istart < lbits; istart += rd)
+    {
         int ostart = lbits - rd - istart;
         ostart = ostart > 0 ? ostart : 0;
         ret |= ((ld >> istart) & mask) << ostart;
@@ -1725,9 +1760,11 @@ static inline WDataOutP VL_STREAML_WWI(int lbits, WDataOutP owp, WDataInP const 
     return owp;
 }
 
+
 static inline VlQueue<unsigned char> VL_STREAML_RWI(int lbits, WDataInP const lwp,
                                                     IData rd) VL_MT_SAFE {
-    // dynamicly make our "temp variable"
+
+    //TODO this function needs to be replaced with one that takes in the q directly and edits it.
     std::vector<uint32_t> my_buffer(lbits / 32, 0);
     WDataOutP owp = my_buffer.data();
     VL_ZERO_W(lbits, owp);
@@ -1755,6 +1792,53 @@ static inline VlQueue<unsigned char> VL_STREAML_RWI(int lbits, WDataInP const lw
         // Extract the byte and push it
         unsigned char byte_val = (owp[word_idx] >> (byte_in_word * 8)) & 0xFF;
         out_queue.push_back(byte_val);
+    }
+
+    return out_queue;
+}
+
+template <typename T>
+static inline VlQueue<T> VL_STREAML_RWI(int lbits, VlQueue<T> const q,
+                                                    IData rd) VL_MT_SAFE
+{
+    // dynamicly make our "temp variable"
+    lbits = q.size() * 8 * sizeof(T);
+    std::vector<uint32_t> my_buffer(lbits / 32, 0);
+    WDataOutP owp = my_buffer.data();
+    WDataInP lwp = q;
+    VL_ZERO_W(lbits, owp);
+    const int ssize = (rd < static_cast<IData>(lbits)) ? rd : (static_cast<IData>(lbits));
+    for (int istart = 0; istart < lbits; istart += rd)
+    {
+        int ostart = lbits - rd - istart;
+        ostart = ostart > 0 ? ostart : 0;
+        for (int sbit = 0; sbit < ssize && sbit < lbits - istart; ++sbit)
+        {
+            const EData bit = (VL_BITRSHIFT_W(lwp, (istart + sbit)) & 1)
+                              << VL_BITBIT_E(ostart + sbit);
+            owp[VL_BITWORD_E(ostart + sbit)] |= bit;
+        }
+    }
+
+    VlQueue<T> out_queue;
+
+    // Figure out how many bytes we actually processed
+    int totalQueElements = (lbits + 7) / sizeof(T);
+
+    // Read the owp buffer backwards to preserve Big-Endian byte order
+    for (int i = totalQueElements - 1; i >= 0; --i)
+    {
+        int word_idx = i / 4;
+        int byte_in_word = i % 4;
+        T queueEmement;
+        if constexpr (sizeof(T) == 1)
+        {
+            queueEmement = (owp[word_idx] >> (byte_in_word * 8)) & 0xFF;
+        }
+        else {
+            queueEmement = owp[word_idx];
+        }
+        out_queue.push_back(queueEmement);
     }
 
     return out_queue;
@@ -1850,9 +1934,38 @@ static inline QData VL_PACK_Q_UI(int /*obits*/, int lbits, const VlUnpacked<IDat
 
 static inline QData VL_PACK_Q_RQ(int /*obits*/, int lbits, const VlQueue<QData>& q) {
     QData ret = 0;
-    for (size_t i = 0; i < q.size(); ++i) ret |= q.at(q.size() - 1 - i) << (i * lbits);
+    for (size_t i = 0; i < q.size(); ++i)
+        ret |= q.at(q.size() - 1 - i) << (i * lbits);
     return ret;
 }
+
+static inline IData VL_PACK_I_RQ(int /*obits*/, int lbits, const VlQueue<QData>& q) {
+    IData ret = 0;
+    for (size_t i = 0; i < q.size(); ++i)
+        ret |= q.at(q.size() - 1 - i) << (i * lbits);
+    return ret;
+}
+
+template <std::size_t N_Words>
+static inline IData VL_PACK_I_RW(int /*obits*/, int lbits, const VlQueue<VlWide<N_Words>> &q)
+{
+    IData ret = 0;
+    for (size_t i = 0; i < q.size(); ++i)
+        ret |= q.at(q.size() - 1 - i).at(0) << (i * lbits);
+    return ret;
+}
+
+// template <std::size_t N_Words>
+// static inline WDataOutP VL_PACK_W_RW(int obits, int lbits, WDataOutP owp,
+//                                      const VlQueue<VlWide<N_Words>>& q) {
+//     VL_MEMSET_ZERO_W(owp + 1, VL_WORDS_I(obits) - 1);
+//     if (VL_UNLIKELY(obits < q.size() * lbits)) return owp;  // Though is illegal for q to be larger
+//     const int offset = obits - q.size() * lbits;
+//     for (size_t i = 0; i < q.size(); ++i)
+//         _vl_insert_WW(owp, q.at(q.size() - 1 - i), i * lbits + lbits - 1 + offset,
+//                       i * lbits + offset);
+//     return owp;
+// }
 
 template <std::size_t N_Depth>
 static inline QData VL_PACK_Q_UQ(int /*obits*/, int lbits, const VlUnpacked<QData, N_Depth>& q) {
@@ -1994,8 +2107,10 @@ static inline WDataOutP VL_CONCAT_WWI(int obits, int lbits, int rbits, WDataOutP
     return owp;
 }
 
-static inline VlQueue<CData> VL_CONCAT_RWI(int obits, int lbits, int rbits, WDataInP const lwp,
-                                           IData rd) VL_MT_SAFE {
+
+static inline VlQueue<CData> VL_CONCAT_RWI(int obits, int lbits, int rbits,
+                                      WDataInP const lwp, IData rd) VL_MT_SAFE
+{
     //TODO make sure this works with any queue size
     std::vector<uint32_t> my_buffer(lbits / 32, 0);
     WDataOutP owp = my_buffer.data();
@@ -2009,9 +2124,10 @@ static inline VlQueue<CData> VL_CONCAT_RWI(int obits, int lbits, int rbits, WDat
     int total_bytes = (lbits + 7) / 8;
 
     // Read the owp buffer backwards to preserve Big-Endian byte order
-    for (int i = total_bytes - 1; i >= 0; --i) {
-        int word_idx = i / 4;  // Which 32-bit chunk is this byte in?
-        int byte_in_word = i % 4;  // Which of the 4 bytes is it?
+    for (int i = total_bytes - 1; i >= 0; --i)
+    {
+        int word_idx = i / 4;     // Which 32-bit chunk is this byte in?
+        int byte_in_word = i % 4; // Which of the 4 bytes is it?
 
         // Extract the byte and push it
         unsigned char byte_val = (owp[word_idx] >> (byte_in_word * 8)) & 0xFF;
@@ -2019,6 +2135,7 @@ static inline VlQueue<CData> VL_CONCAT_RWI(int obits, int lbits, int rbits, WDat
     }
 
     return out_queue;
+
 }
 
 static inline WDataOutP VL_CONCAT_WIW(int obits, int lbits, int rbits, WDataOutP owp, IData ld,

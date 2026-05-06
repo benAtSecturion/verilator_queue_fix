@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <concepts>
 #include <deque>
 #include <map>
 #include <memory>
@@ -525,24 +526,24 @@ public:
         constexpr size_t otherSize = sizeof(T_Other);
         constexpr size_t sizeOfThis = sizeof(T_Value);
 
-        T_Other temp = 0;
-        size_t byteCount = otherSize - 1;
+        T_Value temp = 0;
+        size_t byteCount = sizeOfThis - 1;
 
         for (auto val : rhs) {
             // Shift the byte into the correct position and merge
-            temp |= (static_cast<T_Other>(val) << (byteCount * 8 * otherSize));
+            temp |= (static_cast<T_Value>(val) << (byteCount * 8 * otherSize));
             byteCount--;
 
             // If we've collected enough bytes for the target type, push and reset
             if (byteCount == -1) {
                 this->push_back(temp);
                 temp = 0;
-                byteCount = otherSize - 1;
+                byteCount = sizeOfThis - 1;
             }
         }
 
         // Push any remaining leftover bytes (upper bits will remain zero-padded)
-        if (byteCount > 0) { this->push_back(temp); }
+        if (byteCount < sizeOfThis - 1) { this->push_back(temp); }
 
         return *this;
     }
@@ -564,7 +565,7 @@ public:
             int numQData = 8 / sizeof(T_Value);
             int debugtemp = 0;
 
-            for (int ii = 0; ii < numQData; ii++) {
+            for (int ii = numQData - 1; ii >= 0; ii--) {
                 debugtemp = (ii * sizeof(T_Value) * 8);
                 m_deque.push_back(static_cast<T_Value>(rhs >> (ii * sizeof(T_Value) * 8)));
             }
@@ -593,16 +594,37 @@ public:
     VlQueue& operator=(IData rhs) {
         m_deque.clear();  // Empty the queue first
         // If this is a queue of bytes (unsigned char)
-        if constexpr (sizeof(T_Value) == 1) {
-            // Push all 4 bytes of the 32-bit integer, MSB first (Big-Endian)
-            m_deque.push_back(static_cast<T_Value>((rhs >> 24) & 0xFF));
-            m_deque.push_back(static_cast<T_Value>((rhs >> 16) & 0xFF));
-            m_deque.push_back(static_cast<T_Value>((rhs >> 8) & 0xFF));
-            m_deque.push_back(static_cast<T_Value>(rhs & 0xFF));
-        } else {
+        constexpr int valueSize = sizeof(T_Value);
+        if constexpr (valueSize < 4) {
+            constexpr int mask = (1 << valueSize * 8) - 1;
+            // Push all bytes of the 32-bit integer, MSB first (Big-Endian)
+            constexpr int qElementsPerWord = 4 / valueSize;
+            for (int i = 0; i < qElementsPerWord; i++) {
+                m_deque.push_back(static_cast<T_Value>(
+                    ((rhs >> (qElementsPerWord - i - 1) * 8 * valueSize)) & mask));
+            }
+        }
+        // else if constexpr (requires())
+        // {
+        //     m_deque.clear(); // Empty the queue first
+        //     T_Value rhsWide;
+        //     rhsWide[0] = rhs;
+        //     m_deque.push_back(rhsWide);
+        //     return *this;
+        // }
+        else {
             // If it is a queue of larger types (like ints), just push the whole number
             m_deque.push_back(static_cast<T_Value>(rhs));
         }
+        return *this;
+    }
+
+    template <size_t N_Words>
+    VlQueue<VlWide<N_Words>>& operator=(IData rhs) {
+        m_deque.clear();  // Empty the queue first
+        VlWide<N_Words> rhsWide;
+        rhsWide[0] = rhs;
+        m_deque.push_back(rhsWide);
         return *this;
     }
 
@@ -640,20 +662,29 @@ public:
         thread_local std::vector<uint32_t> s_wide_buffer;
 
         s_wide_buffer.clear();
-
-        if constexpr (sizeof(T_Value) == 1) {
-            int num_words = (m_deque.size() + 3) / 4;
+        constexpr int valueSize = sizeof(T_Value);
+        if constexpr (valueSize < 4) {
+            int qElementsPerWord = 4 / valueSize;
+            int num_words = (m_deque.size() + qElementsPerWord - 1) / qElementsPerWord;
             s_wide_buffer.resize(num_words, 0);
-
             for (size_t i = 0; i < m_deque.size(); ++i) {
-                int word_idx = (m_deque.size() - 1 - i) / 4;
-                int byte_in_word = (m_deque.size() - 1 - i) % 4;
+                int word_idx = (m_deque.size() - 1 - i) / qElementsPerWord;
+                int byte_in_word = (m_deque.size() - 1 - i) % qElementsPerWord;
 
                 s_wide_buffer[word_idx]
-                    |= (static_cast<uint32_t>(m_deque[i]) << (byte_in_word * 8));
+                    |= (static_cast<uint32_t>(m_deque[i]) << (byte_in_word * valueSize * 8));
             }
-        } else {
-            s_wide_buffer.assign(m_deque.begin(), m_deque.end());
+        } else if constexpr (valueSize == 4) {
+            s_wide_buffer.resize(m_deque.size(), 0);
+            for (size_t i = 0; i < m_deque.size(); ++i) {
+                s_wide_buffer[m_deque.size() - 1 - i] = m_deque[i];
+            }
+        } else if constexpr (valueSize == 8) {
+            s_wide_buffer.resize(m_deque.size() * 2, 0);
+            for (size_t i = 0; i < m_deque.size(); ++i) {
+                s_wide_buffer[m_deque.size() * 2 - 1 - i * 2] = m_deque[i] >> 32;
+                s_wide_buffer[m_deque.size() * 2 - 1 - i * 2 - 1] = m_deque[i];
+            }
         }
 
         return s_wide_buffer.data();
@@ -786,8 +817,12 @@ public:
             if (len > 1) value |= static_cast<IData>(m_deque[1]) << 16;
             if (len > 2) value |= static_cast<IData>(m_deque[2]) << 8;
             if (len > 3) value |= static_cast<IData>(m_deque[3]);
+        } else if constexpr (sizeof(T_Value) == 2) {
+            if (len > 0) value |= static_cast<IData>(m_deque[0]) << 16;
+            if (len > 1) value |= static_cast<IData>(m_deque[1]);
         } else {  // If it is a queue of larger types (e.g. ints)
-            if (len > 0) value = static_cast<IData>(m_deque[0]);
+            constexpr int shiftAmt = sizeof(T_Value) > 4 ? 32 : 0;
+            if (len > 0) value = static_cast<IData>(m_deque[0] >> shiftAmt);
         }
 
         return value;

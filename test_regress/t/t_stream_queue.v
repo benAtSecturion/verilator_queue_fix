@@ -21,7 +21,11 @@ module t;
   //full compiler command: ~/verilator/bin/verilator_bin_dbg --cc ../t_stream_queue.v -CFLAGS "-g -O0" --main --exe --build --timing --debug -fno-const -fno-life --gdbbt --dump-tree-addrids --decorations node --Mdir trace_objs/ > failed.txt
   initial begin
     byte byte_pkt[$];
+    logic [15:0] sdata_pkt[$];
     int int_pkt[$];
+    logic [63:0] qdata_pkt[$];
+    logic [128:0] vlwide_pkt[$];
+
     i_header = 12;
     i_len = 5;
     i_data = 11;
@@ -36,7 +40,7 @@ module t;
     //test with QData
     byte_pkt = {<<8{i_header,i_len}};
     {<<8{o_header,o_len}} = byte_pkt;
-    $display("%h %h",{i_header,i_len},{o_header,o_len});
+    `checks({i_header,i_len},{o_header,o_len});
 
     byte_pkt = {<<8{i_header,i_len,i_crc,i_data}};
     {<<8{o_header,o_len,o_crc,o_data}} = byte_pkt;
@@ -44,7 +48,23 @@ module t;
     `checks({>>{byte_pkt}},{<<8{i_header,i_len,i_crc,i_data}});
     `checks({o_header,o_len,o_crc,o_data} ,{i_header,i_len,i_crc,i_data});
 
-    //----------- INT QUEUE --------
+    //----------- SData QUEUE --------
+    sdata_pkt = {<<8{i_header}};
+    o_header = {<<8{sdata_pkt}};
+    `checks(o_header,i_header);
+
+    //test with QData
+    sdata_pkt = {<<8{i_header,i_len}};
+    {<<8{o_header,o_len}} = sdata_pkt;
+    `checks({i_header,i_len},{o_header,o_len});
+
+    sdata_pkt = {<<8{i_header,i_len,i_crc,i_data}};
+    {<<8{o_header,o_len,o_crc,o_data}} = sdata_pkt;
+
+    `checks({>>{sdata_pkt}},{<<8{i_header,i_len,i_crc,i_data}});
+    `checks({o_header,o_len,o_crc,o_data} ,{i_header,i_len,i_crc,i_data});
+
+    //----------- IData QUEUE --------
     int_pkt = {<<8{i_header}};
     o_header = {<<8{int_pkt}};
     `checks(o_header,i_header);
@@ -52,13 +72,49 @@ module t;
     //test with QData
     int_pkt = {<<8{i_header,i_len}};
     {<<8{o_header,o_len}} = int_pkt;
-    $display("%h %h",{i_header,i_len},{o_header,o_len});
+    `checks({i_header,i_len},{o_header,o_len});
 
     int_pkt = {<<8{i_header,i_len,i_crc,i_data}};
     {<<8{o_header,o_len,o_crc,o_data}} = int_pkt;
 
     `checks({>>{int_pkt}},{<<8{i_header,i_len,i_crc,i_data}});
     `checks({o_header,o_len,o_crc,o_data} ,{i_header,i_len,i_crc,i_data});
+
+    //----------- QData QUEUE --------
+    qdata_pkt = {<<8{i_header}};
+    o_header = {<<8{qdata_pkt}};
+    `checks(o_header,i_header);
+
+    //test with QData
+    qdata_pkt = {<<8{i_header,i_len}};
+    {<<8{o_header,o_len}} = qdata_pkt;
+    $display("%h %h",{i_header,i_len},{o_header,o_len});
+
+
+    qdata_pkt = {<<8{i_header,i_len,i_crc,i_data}};
+    {<<8{o_header,o_len,o_crc,o_data}} = qdata_pkt;
+
+    `checks({>>{qdata_pkt}},{<<8{i_header,i_len,i_crc,i_data}});
+    `checks({o_header,o_len,o_crc,o_data} ,{i_header,i_len,i_crc,i_data});
+    $displayh(qdata_pkt);
+
+    //----------- VLWide QUEUE --------
+    vlwide_pkt = {<<8{i_header}};
+    o_header = {<<8{vlwide_pkt}};
+    `checks(o_header,i_header);
+
+    // //test with QData
+    // vlwide_pkt = {<<8{i_header,i_len}};
+    // {<<8{o_header,o_len}} = vlwide_pkt;
+    // $display("%h %h",{i_header,i_len},{o_header,o_len});
+
+
+    // vlwide_pkt = {<<8{i_header,i_len,i_crc,i_data}};
+    // {<<8{o_header,o_len,o_crc,o_data}} = vlwide_pkt;
+
+    // `checks({>>{vlwide_pkt}},{<<8{i_header,i_len,i_crc,i_data}});
+    // `checks({o_header,o_len,o_crc,o_data} ,{i_header,i_len,i_crc,i_data});
+    // $displayh(vlwide_pkt);
 
     //-------------------- STREAMR ------------------------------------
     // byte_pkt = {>>{i_header,i_len,i_crc,i_data}};
