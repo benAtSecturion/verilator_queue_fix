@@ -122,8 +122,15 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                     out += m_wideTempRefp->varp()->nameProtect();
                     m_wideTempRefp = nullptr;
                     needComma = true;
+                } else if (usesQueue){
+                    commaOut();
+                    putOut();
+                    iterateAndNextConstNull(nodep->backp()->op2p());
+                    // out += nodep->backp()->op2p()->varp()->nameProtect();
+                    needComma = true;
                 }
-                break;
+
+                    break;
             default: nodep->v3fatalSrc("Unknown emitOperator format code: %" << pos[0]); break;
             }
             if (detail) {
@@ -132,19 +139,23 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                 switch (pos[0]) {
                 case 'q':
                     putOut();
-                    //if the node we are using dtype is a streamDtype or the node we are assigning to is queueDType
-                    //then we need to use the function for streaming queues
-                    if (VN_IS(detailp->dtypep()->skipRefp(), StreamDType)
-                    || (VN_IS(detailp->backp(), Assign) && VN_IS(detailp->backp()->dtypep()->skipRefp(), QueueDType))) {
-                            puts("R"); // R for queue
-                            usesQueue = true;
+                    //if we are assigning this to a queue we need to get the return type
+                    if (VN_IS(detailp->backp(), Assign) && VN_IS(detailp->backp()->op2p()->dtypep()->skipRefp(), QueueDType)) {
+                        AstQueueDType* qtypep = VN_CAST(detailp->backp()->op2p()->dtypep()->skipRefp(), QueueDType);
+                        AstNodeDType* child_type = qtypep->subDTypep();
+                        int width = child_type->width();
+                        puts("R");  // R for queue
+                        if (width <= 8) puts("C");
+                        else if (width <= 16) puts("S");
+                        else if (width <= 32) puts("I");
+                        else if (width <= 64) puts("Q");
+                        else puts("W");
+                        usesQueue = true;
+                    }else if(VN_IS(detailp->dtypep()->skipRefp(), QueueDType)){
+                        puts("R");  // R for queue
                     } else {
                         emitIQW(detailp);
                     }
-                    // if (nodep->isWide())
-                    //     emitRU(detailp);
-                    // else
-                    //     emitIQW(detailp);
                     break;
                 case 'w':
                     commaOut();

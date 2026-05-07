@@ -508,6 +508,8 @@ class ExpandVisitor final : public VNVisitor {
             // Sel is an LHS assignment select
         } else if (nodep->isWide()) {
             // See under ASSIGN(WIDE)
+        } else if (VN_IS(nodep->fromp()->dtypep(),StreamDType)){
+            //sel stream
         } else if (nodep->fromp()->isWide()) {
             if (isImpure(nodep)) return;
             UINFO(8, "    SEL(wide) " << nodep);

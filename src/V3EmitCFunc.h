@@ -627,44 +627,55 @@ public:
             puts(cvtToStr(nodep->widthMin()) + ", ");
             iterateAndNextConstNull(nodep->lhsp());
             puts(", ");
-        } else if(VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType) && VN_IS(nodep->rhsp(), And)){
-            //if we are doing an "AND" operator on a queue it is indicative that we are sizing the rhs of this operation. casting makes sure it is correct
-            paren = false;
-            iterateAndNextConstNull(nodep->lhsp());
-            puts(" ");
-            ofp()->blockInc();
-            decind = true;
-            if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
-            putns(nodep, "= ");
-            puts(nodep->rhsp()->dtypep()->cType("", false, false, false));
-            if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
-                // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
-                puts(unpackDtp->cType("", false, false, false));
+        }
+        // else if(VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType) && VN_IS(nodep->rhsp(),
+        // And)){
+        //     //if we are doing an "AND" operator on a queue it is indicative that we are sizing
+        //     the rhs of this operation. casting makes sure it is correct paren = false;
+        //     iterateAndNextConstNull(nodep->lhsp());
+        //     puts(" ");
+        //     ofp()->blockInc();
+        //     decind = true;
+        //     if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
+        //     putns(nodep, "= ");
+        //     puts(nodep->rhsp()->dtypep()->cType("", false, false, false));
+        //     if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
+        //         // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
+        //         puts(unpackDtp->cType("", false, false, false));
+        //     }
+        // }
+            else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
+                if(VN_IS(nodep->rhsp(), ShiftR)){
+                    //if we fall into this case verilator is trying to do selection on a q.
+                    //I will skip emitting the shiftR and do it before we do a streamL
+                    rhs = false;
+                    iterateAndNextConstNull(nodep->rhsp()->op2p());
+                }
+                paren = false;
+            }
+            else {
+                paren = false;
+                iterateAndNextConstNull(nodep->lhsp());
+                puts(" ");
+                ofp()->blockInc();
+                decind = true;
+                if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
+                putns(nodep, "= ");
+                if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
+                    // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
+                    puts(unpackDtp->cType("", false, false, false));
+                }
+            }
+            if (rhs) iterateAndNextConstNull(nodep->rhsp());
+            if (paren) puts(")");
+            if (decind) ofp()->blockDec();
+            puts(";\n");
+            if (reverseUnpack) {
+                puts("VL_UNPACK_REVERSED(");
+                iterateAndNextConstNull(nodep->lhsp());
+                puts(");\n");
             }
         }
-        else {
-            paren = false;
-            iterateAndNextConstNull(nodep->lhsp());
-            puts(" ");
-            ofp()->blockInc();
-            decind = true;
-            if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
-            putns(nodep, "= ");
-            if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
-                // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
-                puts(unpackDtp->cType("", false, false, false));
-            }
-        }
-        if (rhs) iterateAndNextConstNull(nodep->rhsp());
-        if (paren) puts(")");
-        if (decind) ofp()->blockDec();
-        puts(";\n");
-        if (reverseUnpack) {
-            puts("VL_UNPACK_REVERSED(");
-            iterateAndNextConstNull(nodep->lhsp());
-            puts(");\n");
-        }
-    }
     void visit(AstAssocSel* nodep) override {
         iterateAndNextConstNull(nodep->fromp());
         putnbs(nodep, ".at(");
@@ -1617,11 +1628,34 @@ public:
             const uint32_t sliceSize = VN_AS(nodep->rhsp(), Const)->toUInt();
             if (isPow2 && sliceSize <= (nodep->isQuad() ? sizeof(uint64_t) : sizeof(uint32_t))) {
                 putns(nodep, "VL_STREAML_FAST_");
-                emitIQW(nodep);
+                bool usesQueue = false;
+                AstQueueDType* qtypep = VN_CAST(nodep->backp()->op2p()->dtypep()->skipRefp(), QueueDType);
+                if (VN_IS(nodep->backp(), Assign) && qtypep) {
+                    AstNodeDType* child_type = qtypep->subDTypep();
+                    int width = child_type->width();
+                    puts("R");  // R for queue
+                    if (width <= 8)
+                        puts("C");
+                    else if (width <= 16)
+                        puts("S");
+                    else if (width <= 32)
+                        puts("I");
+                    else if (width <= 64)
+                        puts("Q");
+                    else
+                        puts("W");
+                    usesQueue = true;
+                } else {
+                    emitIQW(nodep);
+                }
                 emitIQW(nodep->lhsp());
                 puts("I(");
                 puts(cvtToStr(nodep->lhsp()->widthMin()));
                 puts(", ");
+                if (usesQueue) {
+                    iterateAndNextConstNull(nodep->backp()->op2p());
+                    puts(", ");
+                }
                 iterateAndNextConstNull(nodep->lhsp());
                 puts(", ");
                 const uint32_t rd_log2 = V3Number::log2b(VN_AS(nodep->rhsp(), Const)->toUInt());
