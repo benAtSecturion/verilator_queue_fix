@@ -644,28 +644,30 @@ public:
         //         puts(unpackDtp->cType("", false, false, false));
         //     }
         // }
-            else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
-                if(VN_IS(nodep->rhsp(), ShiftR)){
-                    //if we fall into this case verilator is trying to do selection on a q.
-                    //I will skip emitting the shiftR and do it before we do a streamL
-                    rhs = false;
-                    iterateAndNextConstNull(nodep->rhsp()->op2p());
-                }
-                paren = false;
+        else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
+                 && (VN_IS(nodep->rhsp(), StreamL) || VN_IS(nodep->lhsp(), StreamL)
+                     || VN_IS(nodep->rhsp(), StreamR) || VN_IS(nodep->lhsp(), StreamR))) {
+            //if either side is streamL or streamR don't emit lhsp everything will be passed by reference
+            
+            if (VN_IS(nodep->rhsp(), ShiftR)) {
+                rhs = false;
+                iterateAndNextConstNull(nodep->rhsp()->op2p());
             }
-            else {
-                paren = false;
-                iterateAndNextConstNull(nodep->lhsp());
-                puts(" ");
-                ofp()->blockInc();
-                decind = true;
-                if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
-                putns(nodep, "= ");
-                if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
-                    // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
-                    puts(unpackDtp->cType("", false, false, false));
-                }
+            paren = false;
+
+        } else {
+            paren = false;
+            iterateAndNextConstNull(nodep->lhsp());
+            puts(" ");
+            ofp()->blockInc();
+            decind = true;
+            if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
+            putns(nodep, "= ");
+            if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
+                // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
+                puts(unpackDtp->cType("", false, false, false));
             }
+        }
             if (rhs) iterateAndNextConstNull(nodep->rhsp());
             if (paren) puts(")");
             if (decind) ofp()->blockDec();
@@ -1621,6 +1623,15 @@ public:
             emitOpName(nodep, nodep->emitC(), nodep->srcp(), nodep->countp(), nullptr);
         }
     }
+    void visit(AstStreamR* nodep) override {
+        //if our parent node returns a QueueDType then use streamR for queues
+        if ((nodep->backp()->op1p() == nodep || nodep->backp()->op2p() == nodep)
+        && (VN_IS(nodep->backp()->dtypep()->skipRefp(), QueueDType))) {
+            emitOpName(nodep, "VL_STREAMR_%nq%lq%rq(%lw, %P, %li, %ri)", nodep->lhsp(), nodep->rhsp(), nullptr);
+        } else {
+            emitOpName(nodep, nodep->emitC(), nodep->lhsp(), nodep->rhsp(), nullptr);
+        }
+    }
     void visit(AstStreamL* nodep) override {
         // Attempt to use a "fast" stream function for slice size = power of 2
         if (!nodep->isWide()) {  // lhsp is ops1 {rhs{lhs}}
@@ -1634,16 +1645,6 @@ public:
                     AstNodeDType* child_type = qtypep->subDTypep();
                     int width = child_type->width();
                     puts("R");  // R for queue
-                    if (width <= 8)
-                        puts("C");
-                    else if (width <= 16)
-                        puts("S");
-                    else if (width <= 32)
-                        puts("I");
-                    else if (width <= 64)
-                        puts("Q");
-                    else
-                        puts("W");
                     usesQueue = true;
                 } else {
                     emitIQW(nodep);

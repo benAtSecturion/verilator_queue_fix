@@ -145,13 +145,14 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                         AstNodeDType* child_type = qtypep->subDTypep();
                         int width = child_type->width();
                         puts("R");  // R for queue
-                        if (width <= 8) puts("C");
-                        else if (width <= 16) puts("S");
-                        else if (width <= 32) puts("I");
-                        else if (width <= 64) puts("Q");
-                        else puts("W");
+                        // if (width <= 8) puts("C");
+                        // else if (width <= 16) puts("S");
+                        // else if (width <= 32) puts("I");
+                        // else if (width <= 64) puts("Q");
+                        // else puts("W");
                         usesQueue = true;
-                    }else if(VN_IS(detailp->dtypep()->skipRefp(), QueueDType)){
+                    } else if (VN_IS(detailp->dtypep()->skipRefp(), QueueDType)
+                               || VN_IS(detailp->dtypep()->skipRefp(), StreamDType)) {
                         puts("R");  // R for queue
                     } else {
                         emitIQW(detailp);
