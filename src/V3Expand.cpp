@@ -964,7 +964,7 @@ class ExpandVisitor final : public VNVisitor {
     void visitEqNeq(AstNodeBiop* nodep) {
         if (nodep->user1SetOnce()) return;  // Process once
         iterateChildren(nodep);
-        if (nodep->lhsp()->isWide()) {
+        if (nodep->lhsp()->isWide() && !(VN_IS(nodep->lhsp()->dtypep()->skipRefp(), StreamDType) || VN_IS(nodep->rhsp()->dtypep()->skipRefp(), StreamDType))) {
             if (isImpure(nodep)) return;
             if (!doExpandWide(nodep->lhsp())) return;
             if (!doExpandWide(nodep->rhsp())) return;

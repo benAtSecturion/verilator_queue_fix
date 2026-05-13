@@ -126,7 +126,6 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                     commaOut();
                     putOut();
                     iterateAndNextConstNull(nodep->backp()->op2p());
-                    // out += nodep->backp()->op2p()->varp()->nameProtect();
                     needComma = true;
                 }
 
@@ -145,11 +144,6 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                         AstNodeDType* child_type = qtypep->subDTypep();
                         int width = child_type->width();
                         puts("R");  // R for queue
-                        // if (width <= 8) puts("C");
-                        // else if (width <= 16) puts("S");
-                        // else if (width <= 32) puts("I");
-                        // else if (width <= 64) puts("Q");
-                        // else puts("W");
                         usesQueue = true;
                     } else if (VN_IS(detailp->dtypep()->skipRefp(), QueueDType)
                                || VN_IS(detailp->dtypep()->skipRefp(), StreamDType)) {
@@ -167,6 +161,10 @@ void EmitCFunc::emitOpName(AstNode* nodep, const string& format, AstNode* lhsp, 
                     if (lhsp->isWide()) {
                         commaOut();
                         out += cvtToStr(lhsp->widthWords());
+                        needComma = true;
+                    }else if(VN_IS(lhsp, StreamR)){
+                        commaOut();
+                        out += cvtToStr(rhsp->widthWords());
                         needComma = true;
                     }
                     break;
@@ -348,7 +346,10 @@ void EmitCFunc::displayNode(AstNode* nodep, AstSFormatF* fmtp,  // fmtp is nullp
         const bool addrof = isScan || formatAttr.isString() || formatAttr.isComplex();
         puts(",");
         if (addrof) puts("&(");
-        iterateConst(subargp);
+        if (VN_IS(subargp, StreamR))
+            emitStreamR(VN_CAST(subargp,StreamR),nodep); //this has to be done here because streamR doesn't know what it returns
+        else
+            iterateConst(subargp);
         if (addrof) puts(")");
         if (!addrof) emitDatap(argp);
         ofp()->indentDec();

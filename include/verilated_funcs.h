@@ -1681,6 +1681,9 @@ static inline void VL_STREAMR_RWI(int lbits, VlQueue<T>& q, WDataInP const lwp,
                     ((lwp[word] >> (qElementsPerWord - i - 1) * 8 * valueSize)) & mask));
             }
         }
+        else{
+            q.push_back(static_cast<T>(lwp[word]));
+        }
     }
 }
 

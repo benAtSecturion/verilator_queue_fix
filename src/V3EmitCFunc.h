@@ -627,31 +627,26 @@ public:
             puts(cvtToStr(nodep->widthMin()) + ", ");
             iterateAndNextConstNull(nodep->lhsp());
             puts(", ");
-        }
-        // else if(VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType) && VN_IS(nodep->rhsp(),
-        // And)){
-        //     //if we are doing an "AND" operator on a queue it is indicative that we are sizing
-        //     the rhs of this operation. casting makes sure it is correct paren = false;
-        //     iterateAndNextConstNull(nodep->lhsp());
-        //     puts(" ");
-        //     ofp()->blockInc();
-        //     decind = true;
-        //     if (!VN_IS(nodep->rhsp(), Const)) ofp()->putBreak();
-        //     putns(nodep, "= ");
-        //     puts(nodep->rhsp()->dtypep()->cType("", false, false, false));
-        //     if (unpackDtp && VN_IS(nodep->rhsp(), InitArray)) {
-        //         // Emit "VlUnpacked<type, depth>{{...InitArray...}}"
-        //         puts(unpackDtp->cType("", false, false, false));
-        //     }
-        // }
-        else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
-                 && (VN_IS(nodep->rhsp(), StreamL) || VN_IS(nodep->lhsp(), StreamL)
-                     || VN_IS(nodep->rhsp(), StreamR) || VN_IS(nodep->lhsp(), StreamR))) {
+        } else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)
+                 && (
+                     VN_IS(nodep->rhsp(), StreamL)
+                     || VN_IS(nodep->lhsp(), StreamL)
+                     || VN_IS(nodep->rhsp(), StreamR)
+                     || VN_IS(nodep->lhsp(), StreamR)
+                     || VN_IS(nodep->rhsp(), StreamR)
+                     || VN_IS(nodep->rhsp(), And)
+                    )) {
             //if either side is streamL or streamR don't emit lhsp everything will be passed by reference
-            
+
+            //TODO this might not be needed
             if (VN_IS(nodep->rhsp(), ShiftR)) {
                 rhs = false;
                 iterateAndNextConstNull(nodep->rhsp()->op2p());
+            }
+            //if the other side is a const or AND operator stream in. we cant just assign.
+            if (VN_IS(nodep->rhsp(), Const) || VN_IS(nodep->rhsp(), And)) {
+                emitOpName(nodep->lhsp(), "VL_STREAMR_RII(%lw, %li, %ri, 0)", nodep->lhsp(), nodep->rhsp(), nullptr);
+                rhs = false;
             }
             paren = false;
 
@@ -1623,11 +1618,42 @@ public:
             emitOpName(nodep, nodep->emitC(), nodep->srcp(), nodep->countp(), nullptr);
         }
     }
-    void visit(AstStreamR* nodep) override {
-        //if our parent node returns a QueueDType then use streamR for queues
-        if ((nodep->backp()->op1p() == nodep || nodep->backp()->op2p() == nodep)
-        && (VN_IS(nodep->backp()->dtypep()->skipRefp(), QueueDType))) {
+    void emitStreamR(AstStreamR* nodep, AstNode* parent) {
+        if ((VN_IS(parent->dtypep()->skipRefp(), QueueDType))) {
+            emitOpName(nodep, "VL_STREAMR_%nq%lq%rq(%lw, %P, %li, %ri)", nodep->lhsp(),
+                       nodep->rhsp(), nullptr);
+        } else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
+            if (parent->dtypep() && parent->dtypep()->skipRefp()->charIQWN() != "N"
+                && !((parent->op1p() && parent->op1p()->isWide())
+                     || (parent->op2p() && parent->op2p()->isWide()))) {
+                //if our lhsp is a queue make sure we streamR and return the correct type.
+                //if either side is wide or the previous node is string type dont use this case
+                emitOpName(parent, "VL_STREAMR_%nq%lq%rq(%lw, %P, %li, %ri)", nodep->lhsp(),
+                           nodep->rhsp(), nullptr);
+            } else {
+                emitOpName(nodep, nodep->emitC(), nodep->lhsp(), nodep->rhsp(), nullptr);
+            }
+        } else {
+            emitOpName(nodep, nodep->emitC(), nodep->lhsp(), nodep->rhsp(), nullptr);
+        }
+    }
+    void visit(AstStreamR* nodep) override { //this is only meant for queues
+        //the parrent node of our AstStreamR will give just enough info for what streamR should output
+        //if nodep->backp() is not the parent then emitStreamR should have been used. throw an error
+        bool backpIsParent = (nodep->backp()->op1p() == nodep || nodep->backp()->op2p() == nodep);
+        UASSERT(backpIsParent,"can not find return type for streamR");
+        if ((VN_IS(nodep->backp()->dtypep()->skipRefp(), QueueDType))) {
             emitOpName(nodep, "VL_STREAMR_%nq%lq%rq(%lw, %P, %li, %ri)", nodep->lhsp(), nodep->rhsp(), nullptr);
+        } else if (VN_IS(nodep->lhsp()->dtypep()->skipRefp(), QueueDType)) {
+            if (!((nodep->backp()->op1p() && nodep->backp()->op1p()->isWide())
+                     || (nodep->backp()->op2p() && nodep->backp()->op2p()->isWide()))) {
+                //if our lhsp is a queue make sure we streamR and return the correct type.
+                //if either side is wide or the previous node is string type dont use this case
+                emitOpName(nodep->backp(), "VL_STREAMR_%nq%lq%rq(%lw, %P, %li, %ri)",
+                           nodep->lhsp(), nodep->rhsp(), nullptr);
+            } else {
+                emitOpName(nodep, nodep->emitC(), nodep->lhsp(), nodep->rhsp(), nullptr);
+            }
         } else {
             emitOpName(nodep, nodep->emitC(), nodep->lhsp(), nodep->rhsp(), nullptr);
         }
@@ -1640,8 +1666,8 @@ public:
             if (isPow2 && sliceSize <= (nodep->isQuad() ? sizeof(uint64_t) : sizeof(uint32_t))) {
                 putns(nodep, "VL_STREAML_FAST_");
                 bool usesQueue = false;
-                AstQueueDType* qtypep = VN_CAST(nodep->backp()->op2p()->dtypep()->skipRefp(), QueueDType);
-                if (VN_IS(nodep->backp(), Assign) && qtypep) {
+                AstQueueDType* qtypep = nodep->backp()->op2p() ? VN_CAST(nodep->backp()->op2p()->dtypep()->skipRefp(), QueueDType) : nullptr;
+                if (VN_IS(nodep->backp(), Assign) && qtypep) { // if we are assigning to a queue then emit the correct symbol for it
                     AstNodeDType* child_type = qtypep->subDTypep();
                     int width = child_type->width();
                     puts("R");  // R for queue
