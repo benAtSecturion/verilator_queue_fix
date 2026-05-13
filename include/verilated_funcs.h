@@ -904,7 +904,7 @@ static inline WDataOutP VL_NOT_W(int words, WDataOutP owp, WDataInP const lwp) V
 // EMIT_RULE: VL_GTE: oclean=clean; lclean==clean; rclean==clean; obits=1; lbits==rbits;
 // EMIT_RULE: VL_LTE: oclean=clean; lclean==clean; rclean==clean; obits=1; lbits==rbits;
 #define VL_NEQ_W(words, lwp, rwp) (!VL_EQ_W(words, lwp, rwp))
-#define VL_NEQ_R(q, rwp) (!VL_EQ_R(q, rwp))
+#define VL_NEQ_R(words, q, rwp) (!VL_EQ_R(words, q, rwp))
 #define VL_LT_W(words, lwp, rwp) (_vl_cmp_w(words, lwp, rwp) < 0)
 #define VL_LTE_W(words, lwp, rwp) (_vl_cmp_w(words, lwp, rwp) <= 0)
 #define VL_GT_W(words, lwp, rwp) (_vl_cmp_w(words, lwp, rwp) > 0)
@@ -917,41 +917,55 @@ static inline IData VL_EQ_W(int words, WDataInP const lwp, WDataInP const rwp) V
     return (nequal == 0);
 }
 
+template <std::size_t N_Words>
+static inline IData VL_EQ_W(int words, WDataInP const rwp,
+                            const VlQueue<VlWide<N_Words>>& q) VL_PURE {
+    return VL_EQ_R(words, q, rwp);
+}
+
 template <typename T>
-static inline IData VL_EQ_R(VlQueue<T> q, WDataInP const rwp) VL_PURE {
+static inline IData VL_EQ_W(int words, WDataInP const rwp, VlQueue<T> q) VL_PURE {
+    return VL_EQ_R(words, q, rwp);
+}
+
+template <typename T>
+static inline IData VL_EQ_R(int words, VlQueue<T> q, WDataInP const rwp) VL_PURE {
     EData nequal = 0;
-    int words = q.size() * sizeof(T) / 4 - 1;
+    int wordsInQ = q.size() * sizeof(T) / 4 - 1;
+    if (wordsInQ + 1 != words) { return false; }
     IData temp = 0;
     if (sizeof(T) == 1) {
-        for (int i = 0; (i < words + 1); ++i) {
-            temp |= q.at((words - i) * 4 + 3);
-            temp |= q.at((words - i) * 4 + 2) << 8;
-            temp |= q.at((words - i) * 4 + 1) << 16;
-            temp |= q.at((words - i) * 4) << 24;
+        for (int i = 0; (i < wordsInQ + 1); ++i) {
+            temp |= static_cast<EData>(q.at((wordsInQ - i) * 4 + 3));
+            temp |= static_cast<EData>(q.at((wordsInQ - i) * 4 + 2)) << 8;
+            temp |= static_cast<EData>(q.at((wordsInQ - i) * 4 + 1)) << 16;
+            temp |= static_cast<EData>(q.at((wordsInQ - i) * 4)) << 24;
             nequal |= (temp ^ rwp[i]);
             temp = 0;
         }
     } else if (sizeof(T) == 2) {
-        for (int i = 0; (i < words + 1); ++i) {
-            temp |= q.at((words - i) * 2 + 1);
-            temp |= q.at((words - i) * 2) << 16;
+        for (int i = 0; (i < wordsInQ + 1); ++i) {
+            temp |= q.at((wordsInQ - i) * 2 + 1);
+            temp |= q.at((wordsInQ - i) * 2) << 16;
             nequal |= (temp ^ rwp[i]);
             temp = 0;
         }
     } else if (sizeof(T) == 4) {
-        for (int i = 0; (i < words + 1); ++i) { nequal |= (q.at(words - i) ^ rwp[i]); }
+        for (int i = 0; (i < wordsInQ + 1); ++i) { nequal |= (q.at(wordsInQ - i) ^ rwp[i]); }
     }
     return (nequal == 0);
 }
 
 template <std::size_t N_Words>
-static inline IData VL_EQ_R(const VlQueue<VlWide<N_Words>>& q, WDataInP const rwp) VL_PURE {
+static inline IData VL_EQ_R(int words, const VlQueue<VlWide<N_Words>>& q,
+                            WDataInP const rwp) VL_PURE {
     EData nequal = 0;
-    int words = (q.size() * 4) / N_Words - 1;
+    int elementsInQ = (q.size() * 4) / N_Words - 1;
     IData temp = 0;
-    for (int i = 0; i < words + 1; ++i) {
-        int qIndex = (words - i) / N_Words;
-        int wordInWide = (words - i) % N_Words;
+    if ((q.size() * 4) != words) { return false; }
+    for (int i = 0; i < elementsInQ + 1; ++i) {
+        int qIndex = (elementsInQ - i) / N_Words;
+        int wordInWide = (elementsInQ - i) % N_Words;
         nequal |= (q.at(qIndex).at(wordInWide) ^ rwp[i]);
     }
 
@@ -1622,9 +1636,9 @@ static inline void VL_STREAML_FAST_RQI(int lbits, VlQueue<VlWide<N_Words>>& q, Q
     QData ret = VL_STREAML_FAST_QQI(lbits, ld, rd_log2);
     q.clear();
     VlWide<N_Words> value;
-    value[0] = static_cast<EData>(ret >> 32);
-    value[1] = static_cast<EData>(ret);
-    for (int i = 2; i < N_Words; i++) value[i] = 0;
+    value[N_Words - 1] = static_cast<EData>(ret >> 32);
+    value[N_Words - 2] = static_cast<EData>(ret);
+    for (int i = N_Words - 3; i >= 0; i--) value[i] = 0;
     q.push_back(value);
 }
 
@@ -1640,7 +1654,18 @@ static inline void VL_STREAMR_RII(int lbits, VlQueue<T>& q, IData ld, IData rd_l
             q.push_back(
                 static_cast<T>(((ld >> (qElementsPerWord - i - 1) * 8 * valueSize)) & mask));
         }
+    } else {
+        q.push_back(static_cast<T>(ld));
     }
+}
+
+template <std::size_t N_Words>
+static inline void VL_STREAMR_RII(int lbits, VlQueue<VlWide<N_Words>>& q, IData ld,
+                                  IData rd_log2) VL_PURE {
+    q.clear();
+    VlWide<N_Words> value;
+    value.at(0) = ld;
+    q.push_back(value);
 }
 
 template <typename T>
@@ -1666,10 +1691,67 @@ static inline void VL_STREAMR_RQI(int lbits, VlQueue<T>& q, QData ld, IData rd_l
 }
 
 template <typename T>
+static inline IData VL_STREAMR_IRI(int lbits, VlQueue<T>& q, IData rd_log2) VL_PURE {
+    IData value = 0;  // Starts at 0. Out-of-range bits will remain 0.
+    size_t len = q.size();
+
+    if constexpr (sizeof(T) == 1) {  // If it is a queue of bytes
+        if (len > 0) value |= static_cast<IData>(q.at(0)) << 24;
+        if (len > 1) value |= static_cast<IData>(q.at(1)) << 16;
+        if (len > 2) value |= static_cast<IData>(q.at(2)) << 8;
+        if (len > 3) value |= static_cast<IData>(q.at(3));
+    } else if constexpr (sizeof(T) == 2) {
+        if (len > 0) value |= static_cast<IData>(q.at(0)) << 16;
+        if (len > 1) value |= static_cast<IData>(q.at(1));
+    } else if constexpr (sizeof(T) == 8) {
+        if (len > 0) value = static_cast<IData>(q.at(0));
+    } else {  // If it is a queue of larger types (e.g. ints)
+        constexpr int shiftAmt = sizeof(T) > 4 ? 32 : 0;
+        if (len > 0) value = static_cast<IData>(q.at(0) >> shiftAmt);
+    }
+
+    return value;
+}
+
+template <typename T>
+static inline IData VL_STREAMR_QRI(int lbits, VlQueue<T>& q, IData rd_log2) VL_PURE {
+    QData value = 0;
+    size_t len = q.size();
+
+    if constexpr (sizeof(T) == 1) {
+        // Must cast to QData BEFORE shifting to prevent 32-bit overflow!
+        if (len > 0) value |= static_cast<QData>(q.at(0)) << 56;
+        if (len > 1) value |= static_cast<QData>(q.at(1)) << 48;
+        if (len > 2) value |= static_cast<QData>(q.at(2)) << 40;
+        if (len > 3) value |= static_cast<QData>(q.at(3)) << 32;
+        if (len > 4) value |= static_cast<QData>(q.at(4)) << 24;
+        if (len > 5) value |= static_cast<QData>(q.at(5)) << 16;
+        if (len > 6) value |= static_cast<QData>(q.at(6)) << 8;
+        if (len > 7) value |= static_cast<QData>(q.at(7));
+    } else {
+        // If it is a queue of larger types (e.g. ints/longs)
+        if (len > 0) value = static_cast<QData>(q.at(0));
+    }
+
+    return value;
+}
+
+template <std::size_t N_Words>
+static inline void VL_STREAMR_RQI(int lbits, VlQueue<VlWide<N_Words>>& q, QData ld,
+                                  IData rd_log2) VL_PURE {
+    q.clear();  // Empty the queue first
+    VlWide<N_Words> value;
+    value.at(0) = ld;
+    value.at(1) = ld >> 32;
+    q.push_back(value);
+}
+
+template <typename T>
 static inline void VL_STREAMR_RWI(int lbits, VlQueue<T>& q, WDataInP const lwp,
                                   IData rd_log2) VL_PURE {
     q.clear();  // Empty the queue first
     const int numWords = lbits / 32;
+    QData qdataValue = 0;
     for (int word = numWords - 1; word >= 0; word--) {
         constexpr int valueSize = sizeof(T);
         if constexpr (valueSize < 4) {
@@ -1680,16 +1762,155 @@ static inline void VL_STREAMR_RWI(int lbits, VlQueue<T>& q, WDataInP const lwp,
                 q.push_back(static_cast<T>(
                     ((lwp[word] >> (qElementsPerWord - i - 1) * 8 * valueSize)) & mask));
             }
-        }
-        else{
+        } else if constexpr (sizeof(T) == 8) {
+            int shiftAmt = (word & 0x1) << 5;
+            qdataValue |= static_cast<QData>(lwp[word]) << shiftAmt;
+            if ((word & 0x1) == 0) {
+                q.push_back(qdataValue);
+                qdataValue = 0;
+            }
+        } else {
             q.push_back(static_cast<T>(lwp[word]));
         }
+    }
+}
+
+template <std::size_t N_Words>
+static inline void VL_STREAMR_RWI(int lbits, VlQueue<VlWide<N_Words>>& q, WDataInP const lwp,
+                                  IData rd_log2) VL_PURE {
+    q.clear();  // Empty the queue first
+    const int numWords = lbits / 32;
+    VlWide<N_Words> value;
+    for (int ii = 0; ii < N_Words; ii++) { value.at(ii) = 0; }
+    int wordInQueue = 0;
+    for (int word = numWords - 1; word >= 0; word--) {
+        value.at(word) = lwp[word];
+        if ((word % N_Words) == 0) { q.push_back(value); }
     }
 }
 
 template <typename T>
 static inline VlQueue<T> VL_STREAMR_RRI(int lbits, const VlQueue<T> q, IData rd) VL_MT_SAFE {
     return q;
+}
+
+template <typename T_Value, typename T_Other>
+static inline void VL_STREAMR_RRI(int lbits, VlQueue<T_Value>& to_q,
+                                  const VlQueue<T_Other>& from_q, IData rd) VL_MT_SAFE {
+    to_q.clear();
+
+    constexpr size_t otherSize = sizeof(T_Other);
+    constexpr size_t sizeOfThis = sizeof(T_Value);
+
+    T_Value temp = 0;
+    size_t elementCount = sizeOfThis - 1;
+    size_t otherQCount = 0;
+    for (auto val : from_q) {
+        // Shift the byte into the correct position and merge
+        if (otherSize > sizeOfThis) {
+            for (int ii = otherSize / sizeOfThis - 1; ii >= 0; ii--) {
+                temp |= (static_cast<T_Value>(val >> (ii * 8 * sizeOfThis)));
+                elementCount--;
+                // If we've collected enough elements for the target type, push and reset
+                if (elementCount == -1) {
+                    to_q.push_back(temp);
+                    temp = 0;
+                    elementCount = sizeOfThis - 1;
+                }
+            }
+        } else {
+            temp |= (static_cast<T_Value>(val) << (elementCount * 8 * otherSize));
+            elementCount--;
+
+            if (elementCount == -1) {
+                to_q.push_back(temp);
+                temp = 0;
+                elementCount = sizeOfThis - 1;
+            }
+        }
+    }
+
+    // Push any remaining leftover elements (upper bits will remain zero-padded)
+    if (elementCount < sizeOfThis - 1) { to_q.push_back(temp); }
+}
+
+template <typename T_Other, std::size_t N_Words>
+static inline void VL_STREAMR_RRI(int lbits, VlQueue<VlWide<N_Words>>& to_q,
+                                  const VlQueue<T_Other>& from_q, IData rd) VL_MT_SAFE {
+    to_q.clear();
+
+    constexpr size_t otherSize = sizeof(T_Other);
+    constexpr size_t sizeOfThis = 4 * N_Words;
+    constexpr int numOtherInWord = 4 / otherSize;
+    VlWide<N_Words> temp;
+    for (int ii = 0; ii < N_Words; ii++) { temp.at(ii) = 0; }
+    size_t elementCount = sizeOfThis - 1;
+    for (auto val : from_q) {
+        if constexpr (numOtherInWord > 0) {
+            temp.at((elementCount / numOtherInWord) % N_Words)
+                |= (static_cast<EData>(val) << (elementCount * 8 * otherSize));
+            elementCount--;
+            // If we've collected enough elements for the target type, push and reset
+            if (elementCount == -1) {
+                to_q.push_back(temp);
+                for (int ii = 0; ii < N_Words; ii++) { temp.at(ii) = 0; }
+                elementCount = sizeOfThis - 1;
+            }
+        } else {  //QData
+            temp.at(elementCount % N_Words) |= (static_cast<EData>(val >> 32));
+            elementCount--;
+            if (elementCount == -1) {
+                to_q.push_back(temp);
+                for (int ii = 0; ii < N_Words; ii++) { temp.at(ii) = 0; }
+                elementCount = sizeOfThis - 1;
+            }
+            temp.at(elementCount % N_Words) |= (static_cast<EData>(val));
+            elementCount--;
+            if (elementCount == -1) {
+                to_q.push_back(temp);
+                for (int ii = 0; ii < N_Words; ii++) { temp.at(ii) = 0; }
+                elementCount = sizeOfThis - 1;
+            }
+        }
+    }
+
+    // Push any remaining leftover elements (upper bits will remain zero-padded)
+    if (elementCount < sizeOfThis - 1) { to_q.push_back(temp); }
+}
+
+template <typename T_Value, std::size_t N_Words>
+static inline void VL_STREAMR_RRI(int lbits, VlQueue<T_Value>& to_q,
+                                  const VlQueue<VlWide<N_Words>>& from_q, IData rd) VL_MT_SAFE {
+    to_q.clear();
+
+    constexpr size_t otherSize = 4 * N_Words;
+    constexpr size_t sizeOfThis = sizeof(T_Value);
+    T_Value temp = 0;
+    size_t elementCount = sizeOfThis - 1;
+    for (auto val : from_q) {
+        if constexpr (sizeof(T_Value) == 8) {
+            // iterate backwards because queues are msb first
+            for (int wordIndex = N_Words - 1; wordIndex >= 0; wordIndex -= 2) {
+                temp |= (static_cast<T_Value>(val.at(wordIndex)) >> 32);
+                if (wordIndex - 1 >= 0) { temp |= (static_cast<T_Value>(val.at(wordIndex))); }
+                temp = 0;
+                to_q.push_back(temp);
+            }
+        } else {
+            //iterate backwards because queues are msb first
+            for (int wordIndex = N_Words - 1; wordIndex >= 0; wordIndex--) {
+                for (int elemInWord = sizeof(EData) / sizeOfThis - 1; elemInWord >= 0;
+                     elemInWord--) {
+                    temp
+                        = (static_cast<T_Value>(val.at(wordIndex) >> elemInWord * 8 * sizeOfThis));
+                    to_q.push_back(temp);
+                }
+            }
+        }
+    }
+
+    // Push any remaining leftover elements (upper bits will remain zero-padded)
+    if (elementCount < sizeOfThis - 1) { to_q.push_back(temp); }
 }
 
 // Regular "slow" streaming operators
@@ -1705,125 +1926,59 @@ static inline IData VL_STREAML_III(int lbits, IData ld, IData rd) VL_PURE {
     return ret;
 }
 
-// Regular "slow" streaming operators for queues
 template <typename T>
-static inline IData VL_STREAML_III(int lbits, const VlQueue<T>& q, IData rd) VL_PURE {
-    // lbits will always be zero because StreamDType width is always 0
-    lbits = 32 * 8;
-    IData ret = 0;
-    IData ld = q.getFirst32Bits();
-    // Slice size should never exceed the lhs width
-    const IData mask = VL_MASK_I(rd);
-    for (int istart = 0; istart < lbits; istart += rd) {
-        int ostart = lbits - rd - istart;
-        ostart = ostart > 0 ? ostart : 0;
-
-        ret |= ((ld >> istart) & mask) << ostart;
-    }
-    return ret;
-}
-
-template <typename T>
-static inline VlQueue<unsigned char> VL_STREAML_RRI(int lbits, const VlQueue<T> q,
-                                                    IData rd) VL_MT_SAFE {
-    // TODO this function needs to have a temp variable
+static inline VlQueue<T> VL_STREAML_RRI(int lbits, const VlQueue<T> q, IData rd) VL_MT_SAFE {
+    // TODO this function needs to have a temp variable made in verilator and passed in.
     //  dynamicly make our "temp variable"
+    VlQueue<T> out_queue;
     lbits = q.size() * 8 * sizeof(T);
-    std::vector<uint32_t> my_buffer(lbits / 32, 0);
-    WDataOutP owp = my_buffer.data();
-    WDataInP lwp = q;
-    VL_ZERO_W(lbits, owp);
+    out_queue.renew(q.size());
+    constexpr unsigned int moduloMask = 8 * sizeof(T) - 1;
     const int ssize = (rd < static_cast<IData>(lbits)) ? rd : (static_cast<IData>(lbits));
     for (int istart = 0; istart < lbits; istart += rd) {
         int ostart = lbits - rd - istart;
         ostart = ostart > 0 ? ostart : 0;
         for (int sbit = 0; sbit < ssize && sbit < lbits - istart; ++sbit) {
-            // #define VL_BITRSHIFT_W(data, bit) ((data)[VL_BITWORD_E(bit)] >> VL_BITBIT_E(bit))
-            // #define VL_BITWORD_E(bit) ((bit) >> VL_EDATASIZE_LOG2)
-            // #define VL_EDATASIZE_LOG2 5
-            // #define VL_BITBIT_E(bit) ((bit) & VL_SIZEBITS_E)
-            // #define VL_SIZEBITS_E (VL_EDATASIZE - 1)
-            // #define VL_EDATASIZE 32
 
-            // lwp[(istart + sbit) >> 5] >> ((istart + sbit) & 0xFFFF)
-            // VL_BITRSHIFT_W(lwp, (istart + sbit))
-            const EData bit = (VL_BITRSHIFT_W(lwp, (istart + sbit)) & 1)
-                              << VL_BITBIT_E(ostart + sbit);
-            owp[VL_BITWORD_E(ostart + sbit)] |= bit;
+            int qIndex = (ostart + sbit) / (8 * sizeof(T));
+            int shiftLeft = (istart + sbit) & moduloMask;
+            int shiftRight = ((ostart + sbit) & moduloMask);
+            const T bit = ((q.at(qIndex)) >> shiftRight & 1) << shiftLeft;
+            int writeIndx = (istart + sbit) / (8 * sizeof(T));
+            out_queue.atWrite(writeIndx) |= bit;
         }
-    }
-
-    VlQueue<unsigned char> out_queue;
-
-    // Figure out how many bytes we actually processed
-    int total_bytes = (lbits + 7) / 8;
-
-    // Read the owp buffer backwards to preserve Big-Endian byte order
-    for (int i = total_bytes - 1; i >= 0; --i) {
-        int word_idx = i / 4;  // Which 32-bit chunk is this byte in?
-        int byte_in_word = i % 4;  // Which of the 4 bytes is it?
-
-        // Extract the byte and push it
-        unsigned char byte_val = (owp[word_idx] >> (byte_in_word * 8)) & 0xFF;
-        out_queue.push_back(byte_val);
     }
 
     return out_queue;
 }
 
 template <std::size_t N_Words>
-static inline VlQueue<unsigned char> VL_STREAML_RRI(int lbits, const VlQueue<VlWide<N_Words>> q,
-                                                    IData rd) VL_MT_SAFE {
+static inline VlQueue<VlWide<N_Words>> VL_STREAML_RRI(int lbits, const VlQueue<VlWide<N_Words>> q,
+                                                      IData rd) VL_MT_SAFE {
     // TODO this function needs to have a temp variable.
     //  dynamicly make our "temp variable"
     lbits = q.size() * 8 * 4 * N_Words;
-    std::vector<uint32_t> my_buffer(lbits / 32, 0);
-    WDataOutP owp = my_buffer.data();
-
-    // thread_local std::vector<uint32_t> s_wide_buffer;
-    // s_wide_buffer.resize(q.size() * N_Words, 0);
-    // for (size_t i = 0; i < q.size() * N_Words; ++i)
-    // {
-    //     int qIndex = i / N_Words;
-    //     int wordIndex = i % N_Words;
-    //     s_wide_buffer[q.size() - 1 - i] = q.at(qIndex)[N_Words];
-    // }
-    // WDataInP lwp = s_wide_buffer.data();
-    VL_ZERO_W(lbits, owp);
+    constexpr int sizeOfElement = 8 * 4 * N_Words;
+    VlQueue<VlWide<N_Words>> out_queue;
+    out_queue.renew(q.size());
+    constexpr unsigned int moduloMask = sizeOfElement - 1;
     const int ssize = (rd < static_cast<IData>(lbits)) ? rd : (static_cast<IData>(lbits));
     for (int istart = 0; istart < lbits; istart += rd) {
         int ostart = lbits - rd - istart;
         ostart = ostart > 0 ? ostart : 0;
         for (int sbit = 0; sbit < ssize && sbit < lbits - istart; ++sbit) {
-            // #define VL_BITRSHIFT_W(data, bit) ((data)[VL_BITWORD_E(bit)] >> VL_BITBIT_E(bit))
-            // #define VL_BITWORD_E(bit) ((bit) >> VL_EDATASIZE_LOG2)
-            // #define VL_EDATASIZE_LOG2 5
-            // #define VL_BITBIT_E(bit) ((bit) & VL_SIZEBITS_E)
-            // #define VL_SIZEBITS_E (VL_EDATASIZE - 1)
-            // #define VL_EDATASIZE 32
 
-            // lwp[(istart + sbit) >> 5] >> ((istart + sbit) & 0xFFFF)
-            int qIndex = ((ostart + sbit) >> 5) / N_Words;
-            int wordInWide = ((ostart + sbit) >> 5) % N_Words;
-            const EData bit = ((q.at(0).at(wordInWide)) >> ((istart + sbit) & 0xFFFF) & 1)
-                              << VL_BITBIT_E(ostart + sbit);
-            owp[VL_BITWORD_E(ostart + sbit)] |= bit;
+            int qIndex = (ostart + sbit) / (sizeOfElement);
+            int shiftLeftTotal = (istart + sbit) & moduloMask;
+            int shiftRightTotal = ((ostart + sbit) & moduloMask);
+            int shiftRight = shiftRightTotal & 0xFFFFFFFF;
+            int wordIn = shiftRightTotal >> 5;
+            int shiftLeft = shiftLeftTotal & 0xFFFFFFFF;
+            int wordOut = shiftLeftTotal >> 5;
+            const EData bit = ((q.at(qIndex).at(wordIn)) >> shiftRight & 1) << shiftLeft;
+            int writeIndx = (istart + sbit) / (sizeOfElement);
+            out_queue.atWrite(writeIndx).at(wordOut) |= bit;
         }
-    }
-
-    VlQueue<unsigned char> out_queue;
-
-    // Figure out how many bytes we actually processed
-    int total_bytes = (lbits + 7) / 8;
-
-    // Read the owp buffer backwards to preserve Big-Endian byte order
-    for (int i = total_bytes - 1; i >= 0; --i) {
-        int word_idx = i / 4;  // Which 32-bit chunk is this byte in?
-        int byte_in_word = i % 4;  // Which of the 4 bytes is it?
-
-        // Extract the byte and push it
-        unsigned char byte_val = (owp[word_idx] >> (byte_in_word * 8)) & 0xFF;
-        out_queue.push_back(byte_val);
     }
 
     return out_queue;
@@ -1949,7 +2104,7 @@ static inline void VL_STREAML_RWI(int lbits, VlQueue<VlWide<N_Words>>& q, WDataI
             const EData bit = (VL_BITRSHIFT_W(lwp, (istart + sbit)) & 1)
                               << VL_BITBIT_E(ostart + sbit);
             int qIndex = istart / numBitsInT;
-            int wordInWide = (istart % numBitsInT) / 32;
+            int wordInWide = (ostart % numBitsInT) / 32;
             q.atWrite(qIndex).at(wordInWide) |= (bit);
         }
     }
@@ -2578,16 +2733,35 @@ template <typename T>
 static inline IData VL_SEL_IRII(int lbits, const VlQueue<T>& lhs, IData lsb,
                                 IData width) VL_MT_SAFE {
     IData val = 0;
-    if (sizeof(T) == 1) {
+    if (sizeof(T) == 8) {
         int offset = lhs.size() * sizeof(T) / 4 - lsb / 32 - 1;
-        val |= static_cast<IData>(lhs.at(offset * 4 + 3));
-        val |= static_cast<IData>(lhs.at(offset * 4 + 2)) << 8;
-        val |= static_cast<IData>(lhs.at(offset * 4 + 1)) << 16;
-        val |= static_cast<IData>(lhs.at(offset * 4)) << 24;
-    } else if (sizeof(T) == 4) {
-        int offset = lhs.size() * sizeof(T) / 4 - lsb / 32;
-        val |= static_cast<IData>(lhs.at(offset));
+        int wordIndex = (lsb % 64) / 32;
+        int shiftAmt = wordIndex * 32;
+        int index = offset / 2;
+        val |= static_cast<IData>(lhs.at(index) >> shiftAmt);
+        return val;
     }
+    const int qElemPerWord = 4 / sizeof(T);
+    const int shiftAmt = qElemPerWord > 1 ? sizeof(T) * 8 : 0;
+    for (int ii = 0; ii < qElemPerWord; ii++) {
+        const int offset = lhs.size() * sizeof(T) / 4 - lsb / 32 - 1;
+        const int index = offset * qElemPerWord + (qElemPerWord - 1 - ii);
+        val |= static_cast<IData>(lhs.at(index)) << (shiftAmt * ii);
+    }
+    return val;
+}
+
+template <std::size_t N_Words>
+static inline IData VL_SEL_IRII(int lbits, const VlQueue<VlWide<N_Words>>& lhs, IData lsb,
+                                IData width) VL_MT_SAFE {
+    IData val = 0;
+
+    int offset = lhs.size() * N_Words - lsb / 32 - 1;
+    int wordIndex = (lsb % (N_Words * 32)) / 32;
+    int shiftAmt = lsb % 32;
+    int index = offset / N_Words;
+    val = lhs.at(index).at(wordIndex) >> shiftAmt;
+
     return val;
 }
 

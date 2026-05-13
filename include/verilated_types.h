@@ -519,41 +519,6 @@ public:
         return *this;
     }
 
-    // template <class T_Other>
-    // VlQueue &operator=(const VlQueue<T_Other> &rhs)
-    // {
-    //     this->m_deque.clear();
-
-    //     constexpr size_t otherSize = sizeof(T_Other);
-    //     constexpr size_t sizeOfThis = sizeof(T_Value);
-
-    //     T_Value temp = 0;
-    //     size_t byteCount = sizeOfThis - 1;
-
-    //     for (auto val : rhs)
-    //     {
-    //         // Shift the byte into the correct position and merge
-    //         temp |= (static_cast<T_Value>(val) << (byteCount * 8 * otherSize));
-    //         byteCount--;
-
-    //         // If we've collected enough bytes for the target type, push and reset
-    //         if (byteCount == -1)
-    //         {
-    //             this->push_back(temp);
-    //             temp = 0;
-    //             byteCount = sizeOfThis - 1;
-    //         }
-    //     }
-
-    //     // Push any remaining leftover bytes (upper bits will remain zero-padded)
-    //     if (byteCount < sizeOfThis - 1)
-    //     {
-    //         this->push_back(temp);
-    //     }
-
-    //     return *this;
-    // }
-
     // Construct new object from _V_alue and/or _C_ontainer child objects
     static VlQueue consV(const T_Value& lhs) {
         VlQueue out;
